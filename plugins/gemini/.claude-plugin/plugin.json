@@ -1,0 +1,13 @@
+{
+  "name": "gemini",
+  "version": "1.0.0",
+  "description": "Use Gemini CLI from Claude Code to delegate tasks, run code reviews, and get adversarial design feedback.",
+  "author": {
+    "name": "madciapka",
+    "url": "https://github.com/madciapka"
+  },
+  "repository": "https://github.com/madciapka/gemini-claude-plugin",
+  "homepage": "https://github.com/madciapka/gemini-claude-plugin",
+  "license": "MIT",
+  "keywords": ["gemini", "google", "review", "code-review", "second-opinion", "delegation"]
+}
