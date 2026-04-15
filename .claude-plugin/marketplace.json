@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "Gemini CLI plugin for Claude Code — delegate tasks, run reviews, and get adversarial design feedback.",
-    "version": "1.0.0"
+    "version": "1.0.1"
   },
   "plugins": [
     {
       "name": "gemini",
       "source": "./plugins/gemini",
       "description": "Use Gemini CLI from Claude Code to delegate tasks, run code reviews, and get adversarial design feedback.",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": {
         "name": "madciapka"
       }

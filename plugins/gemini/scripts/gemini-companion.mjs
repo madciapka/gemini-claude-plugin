@@ -192,8 +192,15 @@ async function handleTask(argv) {
 
   const result = await runGeminiHeadless({ prompt, model, approvalMode, sandbox, cwd });
 
+  // When Gemini succeeds (exit 0) but stdout is empty, the response may have
+  // been written to stderr.  Only fall back to stderr on success — on failure,
+  // stderr is an error message, not a response.
+  const isSuccess = result.exitCode === 0;
+  const rawOutput = isSuccess ? (result.stdout || result.stderr) : result.stdout;
+  const failureMessage = isSuccess ? (result.stdout ? result.stderr : "") : result.stderr;
+
   const rendered = renderTaskResult(
-    { rawOutput: result.stdout, failureMessage: result.stderr },
+    { rawOutput, failureMessage },
     { title }
   );
 
@@ -251,8 +258,12 @@ async function handleReviewCommand(argv, config) {
     outputFormat: "text"
   });
 
+  const isSuccess = result.exitCode === 0;
+  const rawOutput = isSuccess ? (result.stdout || result.stderr) : result.stdout;
+  const failureMessage = isSuccess ? (result.stdout ? result.stderr : "") : result.stderr;
+
   const rendered = renderReviewResult(
-    { rawOutput: result.stdout, failureMessage: result.stderr },
+    { rawOutput, failureMessage },
     { reviewLabel: config.reviewName, targetLabel: target.label }
   );
 

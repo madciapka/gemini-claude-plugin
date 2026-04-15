@@ -49,6 +49,12 @@ export function renderTaskResult(result, options = {}) {
 
   if (result.rawOutput) {
     lines.push(result.rawOutput);
+  } else if (!result.failureMessage) {
+    lines.push(`## ${title} — Empty Response\n`);
+    lines.push("Gemini returned no output. This may indicate a rate limit, timeout, or an issue with the prompt. Try running the task again.");
+    if (jobId) {
+      lines.push(`\nJob: ${jobId}`);
+    }
   }
 
   return lines.join("\n") + "\n";
@@ -74,6 +80,8 @@ export function renderReviewResult(result, options = {}) {
   }
   if (result.rawOutput) {
     lines.push(result.rawOutput);
+  } else if (!result.failureMessage) {
+    lines.push("Gemini returned no output. This may indicate a rate limit, timeout, or an issue with the diff. Try running the review again.");
   }
 
   return lines.join("\n") + "\n";
