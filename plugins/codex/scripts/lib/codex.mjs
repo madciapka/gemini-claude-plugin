@@ -38,21 +38,27 @@ export function getCodexAuthStatus(cwd) {
 
 export function buildCodexArgs({ model, sandbox, outputFormat }) {
   const args = [];
-  // Adapt this based on actual codex CLI arguments
   if (model) {
     args.push("--model", model);
   }
   if (sandbox) {
-    args.push("--sandbox");
+    // codex CLI expects a value for --sandbox, defaulting to read-only for reviews/tasks
+    args.push("--sandbox", "read-only");
   }
   return args;
 }
 
 export function runCodexHeadless(options = {}) {
   return new Promise((resolve, reject) => {
-    // Basic mapping: task/review commands
-    const command = options.command || "task";
-    const args = [command, ...buildCodexArgs(options)];
+    // Mapping: 'task' command in companion maps to 'exec' in codex CLI
+    const command = options.command === "task" ? "exec" : options.command;
+    const args = [command];
+    
+    args.push(...buildCodexArgs(options));
+
+    if (options.prompt) {
+      args.push("-");
+    }
 
     const child = spawn(CODEX_BINARY, args, {
       cwd: options.cwd ?? process.cwd(),

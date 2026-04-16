@@ -154,7 +154,7 @@ async function handleTask(argv) {
     const wrapperScript = `
       const { spawn } = require("child_process");
       const fs = require("fs");
-      const args = ["task", ${model ? `"--model", ${JSON.stringify(model)},` : ""} ${sandbox ? `"--sandbox",` : ""}];
+      const args = ["exec", ${model ? `"--model", ${JSON.stringify(model)},` : ""} ${sandbox ? `"--sandbox", "read-only",` : ""}];
       const logFd = fs.openSync(${JSON.stringify(logFile)}, "w");
       const child = spawn("codex", args, { cwd: ${JSON.stringify(cwd)}, stdio: ["pipe", logFd, logFd] });
       child.stdin.write(${JSON.stringify(prompt)});
