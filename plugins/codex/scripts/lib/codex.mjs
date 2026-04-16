@@ -36,13 +36,13 @@ export function getCodexAuthStatus(cwd) {
   }
 }
 
-export function buildCodexArgs({ model, sandbox, outputFormat }) {
+export function buildCodexArgs({ command, model, sandbox, outputFormat }) {
   const args = [];
   if (model) {
     args.push("--model", model);
   }
-  if (sandbox) {
-    // codex CLI expects a value for --sandbox, defaulting to read-only for reviews/tasks
+  if (sandbox && command !== "review") {
+    // codex CLI expects a value for --sandbox, defaulting to read-only for tasks
     args.push("--sandbox", "read-only");
   }
   return args;
@@ -54,7 +54,7 @@ export function runCodexHeadless(options = {}) {
     const command = options.command === "task" ? "exec" : options.command;
     const args = [command];
     
-    args.push(...buildCodexArgs(options));
+    args.push(...buildCodexArgs({ ...options, command }));
 
     if (options.prompt) {
       args.push("-");
