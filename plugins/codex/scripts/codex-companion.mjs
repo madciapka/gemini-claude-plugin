@@ -4,6 +4,9 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
+import { mkdtempSync, writeFileSync } from "node:fs";
 
 import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
 import { getCodexAvailability, getCodexAuthStatus, buildCodexArgs, runCodexHeadless } from "./lib/codex.mjs";
@@ -118,7 +121,6 @@ function handleSetup(argv) {
     nextSteps
   };
 
-  // Reusing renderSetupReport which might need adaptation but works as a base
   outputResult(options.json ? report : renderSetupReport(report), options.json);
 }
 
@@ -150,21 +152,31 @@ async function handleTask(argv) {
     const stateFile = path.join(workspaceRoot, ".gemini-companion", "logs", `${jobId}.state.json`);
     fs.mkdirSync(path.dirname(logFile), { recursive: true });
 
-    // Spawn codex task in background
+    // Fix E2BIG by using a temp file for the prompt
+    const tempDir = mkdtempSync(path.join(tmpdir(), "codex-prompt-"));
+    const promptFile = path.join(tempDir, "prompt.txt");
+    writeFileSync(promptFile, prompt);
+
+    // Spawn codex task in background, recording child PID
     const wrapperScript = `
-      const { spawn } = require("child_process");
-      const fs = require("fs");
-      const args = ["exec", ${model ? `"--model", ${JSON.stringify(model)},` : ""} ${sandbox ? `"--sandbox", "read-only",` : ""}];
+      import { spawn } from "node:child_process";
+      import fs from "node:fs";
+      const args = ["exec", ${model ? `"--model", ${JSON.stringify(model)},` : ""} ${sandbox ? `"--sandbox", "read-only",` : ""} "-"];
       const logFd = fs.openSync(${JSON.stringify(logFile)}, "w");
+      const promptStream = fs.createReadStream(${JSON.stringify(promptFile)});
       const child = spawn("codex", args, { cwd: ${JSON.stringify(cwd)}, stdio: ["pipe", logFd, logFd] });
-      child.stdin.write(${JSON.stringify(prompt)});
-      child.stdin.end();
+      promptStream.pipe(child.stdin);
+      
+      // Record actual child PID for better cancellation
+      fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ pid: child.pid, status: "running" }));
+      
       child.on("close", (code) => {
         fs.closeSync(logFd);
-        fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ exitCode: code, completedAt: new Date().toISOString() }));
+        fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ exitCode: code, completedAt: new Date().toISOString(), pid: child.pid }));
+        fs.rmSync(${JSON.stringify(tempDir)}, { recursive: true, force: true });
       });
     `;
-    const child = fs.spawn ? fs.spawn(process.execPath, ["-e", wrapperScript]) : (require("child_process")).spawn(process.execPath, ["-e", wrapperScript], {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", wrapperScript], {
       cwd,
       env: process.env,
       detached: true,
@@ -178,7 +190,7 @@ async function handleTask(argv) {
       title,
       summary,
       status: "running",
-      pid: child.pid,
+      wrapperPid: child.pid,
       startedAt: nowIso(),
       logFile,
       stateFile
@@ -253,20 +265,30 @@ async function handleReviewCommand(argv, config) {
     const stateFile = path.join(workspaceRoot, ".gemini-companion", "logs", `${jobId}.state.json`);
     fs.mkdirSync(path.dirname(logFile), { recursive: true });
 
+    // Fix E2BIG by using a temp file for the prompt
+    const tempDir = mkdtempSync(path.join(tmpdir(), "codex-prompt-"));
+    const promptFile = path.join(tempDir, "prompt.txt");
+    writeFileSync(promptFile, prompt);
+
     const wrapperScript = `
-      const { spawn } = require("child_process");
-      const fs = require("fs");
+      import { spawn } from "node:child_process";
+      import fs from "node:fs";
       const args = ["review", ${model ? `"--model", ${JSON.stringify(model)},` : ""} "-"];
       const logFd = fs.openSync(${JSON.stringify(logFile)}, "w");
+      const promptStream = fs.createReadStream(${JSON.stringify(promptFile)});
       const child = spawn("codex", args, { cwd: ${JSON.stringify(cwd)}, stdio: ["pipe", logFd, logFd] });
-      child.stdin.write(${JSON.stringify(prompt)});
-      child.stdin.end();
+      promptStream.pipe(child.stdin);
+      
+      // Record actual child PID for better cancellation
+      fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ pid: child.pid, status: "running" }));
+
       child.on("close", (code) => {
         fs.closeSync(logFd);
-        fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ exitCode: code, completedAt: new Date().toISOString() }));
+        fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ exitCode: code, completedAt: new Date().toISOString(), pid: child.pid }));
+        fs.rmSync(${JSON.stringify(tempDir)}, { recursive: true, force: true });
       });
     `;
-    const child = (require("child_process")).spawn(process.execPath, ["-e", wrapperScript], {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", wrapperScript], {
       cwd,
       env: process.env,
       detached: true,
@@ -280,7 +302,7 @@ async function handleReviewCommand(argv, config) {
       title,
       summary,
       status: "running",
-      pid: child.pid,
+      wrapperPid: child.pid,
       startedAt: nowIso(),
       logFile,
       stateFile
@@ -314,7 +336,7 @@ async function handleReviewCommand(argv, config) {
   }
 }
 
-// ─── Status, Result, Cancel (Shared logic with Gemini) ───
+// ─── Status, Result, Cancel ───
 
 function handleStatus(argv) {
   const { options, positionals } = parseCommandInput(argv, { valueOptions: ["cwd"], booleanOptions: ["json", "all"] });
@@ -355,7 +377,21 @@ function handleCancel(argv) {
   const reference = positionals[0];
   const job = resolveCancelableJob(workspaceRoot, reference);
 
-  terminateProcessTree(job.pid);
+  // Try to find the actual child PID from the state file
+  let pidToKill = job.pid || job.wrapperPid;
+  if (job.stateFile) {
+    try {
+      const state = JSON.parse(fs.readFileSync(job.stateFile, "utf8"));
+      if (state.pid) pidToKill = state.pid;
+    } catch { /* ignore */ }
+  }
+
+  terminateProcessTree(pidToKill);
+  // Also kill the wrapper if it's different
+  if (job.wrapperPid && job.wrapperPid !== pidToKill) {
+    terminateProcessTree(job.wrapperPid);
+  }
+
   const completedAt = nowIso();
   const updated = { ...job, status: "cancelled", completedAt, errorMessage: "Cancelled by user." };
   writeJobFile(workspaceRoot, job.id, updated);
