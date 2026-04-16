@@ -4,6 +4,8 @@ The [Codex plugin](https://github.com/openai/codex-plugin-cc) showed that giving
 
 This plugin brings Google's [Gemini CLI](https://github.com/google-gemini/gemini-cli) into Claude Code as a peer. Same architecture as the Codex plugin, same patterns — different model behind the curtain. Sharing is caring.
 
+And I could not help myself and sent Gemini to do Codex for Gemini so we can close the circle ... https://github.com/madciapka/codex-gemini-skill :)
+
 ## Commands
 
 | Command | Description |
