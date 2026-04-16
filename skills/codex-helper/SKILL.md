@@ -10,18 +10,18 @@ This skill instructs you on how to delegate tasks to the `codex` CLI. Use this w
 ## Workflows
 
 ### 1. Code Review (`codex review`)
-When asked to have Codex review uncommitted or staged changes:
-1. Generate a unique temp file path: `TMP_DIFF=$(mktemp)`.
-2. Gather the diff: `git diff HEAD > "$TMP_DIFF"`.
-3. Run `codex review - < "$TMP_DIFF"`.
-4. Clean up: `rm "$TMP_DIFF"`.
+When asked to have Codex review changes, ALWAYS run the entire sequence in a single `run_shell_command` to ensure the temp variable persists:
+
+```bash
+T=$(mktemp) && git diff HEAD > "$T" && codex review - < "$T"; rm "$T"
+```
 
 ### 2. Adversarial Review (`codex review` with custom prompt)
-When asked for an adversarial or security-focused review:
-1. Generate a unique temp file path: `TMP_DIFF=$(mktemp)`.
-2. Gather the diff: `git diff HEAD > "$TMP_DIFF"`.
-3. Run `codex review "Perform an adversarial review. Find flaws, edge cases, race conditions, and architectural weaknesses." - < "$TMP_DIFF"`.
-4. Clean up: `rm "$TMP_DIFF"`.
+To provide custom instructions while piping a diff, combine them into one stream:
+
+```bash
+T=$(mktemp) && (echo "Perform an adversarial review. Find flaws and race conditions."; git diff HEAD) > "$T" && codex review - < "$T"; rm "$T"
+```
 
 ### 3. Task Delegation (`codex exec`)
 When asked to delegate a coding task to Codex:
