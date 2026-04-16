@@ -218,11 +218,12 @@ async function handleAdversarialReview(argv) {
 async function handleReviewCommand(argv, config) {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ["base", "scope", "model", "cwd"],
-    booleanOptions: ["json"],
+    booleanOptions: ["json", "background"],
     aliasMap: { m: "model" }
   });
 
   const cwd = resolveCommandCwd(options);
+  const workspaceRoot = resolveWorkspaceRoot(cwd);
   ensureGitRepository(cwd);
 
   const target = resolveReviewTarget(cwd, { base: options.base, scope: options.scope });
@@ -243,6 +244,56 @@ async function handleReviewCommand(argv, config) {
   });
 
   const model = options.model ?? null;
+  const title = config.reviewName;
+  const summary = `Review for ${target.label}`;
+
+  if (options.background) {
+    const jobId = generateJobId("review");
+    const logFile = path.join(workspaceRoot, ".gemini-companion", "logs", `${jobId}.log`);
+    const stateFile = path.join(workspaceRoot, ".gemini-companion", "logs", `${jobId}.state.json`);
+    fs.mkdirSync(path.dirname(logFile), { recursive: true });
+
+    const wrapperScript = `
+      const { spawn } = require("child_process");
+      const fs = require("fs");
+      const args = ["review", ${model ? `"--model", ${JSON.stringify(model)},` : ""} "-"];
+      const logFd = fs.openSync(${JSON.stringify(logFile)}, "w");
+      const child = spawn("codex", args, { cwd: ${JSON.stringify(cwd)}, stdio: ["pipe", logFd, logFd] });
+      child.stdin.write(${JSON.stringify(prompt)});
+      child.stdin.end();
+      child.on("close", (code) => {
+        fs.closeSync(logFd);
+        fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ exitCode: code, completedAt: new Date().toISOString() }));
+      });
+    `;
+    const child = (require("child_process")).spawn(process.execPath, ["-e", wrapperScript], {
+      cwd,
+      env: process.env,
+      detached: true,
+      stdio: "ignore"
+    });
+    child.unref();
+
+    const job = {
+      id: jobId,
+      kind: "review",
+      title,
+      summary,
+      status: "running",
+      pid: child.pid,
+      startedAt: nowIso(),
+      logFile,
+      stateFile
+    };
+
+    writeJobFile(workspaceRoot, jobId, job);
+    upsertJob(workspaceRoot, job);
+
+    const payload = { jobId, status: "running", title, summary, logFile };
+    outputResult(options.json ? payload : renderQueuedLaunch(payload), options.json);
+    return;
+  }
+
   const result = await runCodexHeadless({
     command: "review",
     prompt,
