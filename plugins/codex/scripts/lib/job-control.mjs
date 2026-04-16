@@ -46,14 +46,16 @@ export function enrichJobStatus(job) {
     if (job.stateFile) {
       try {
         const state = JSON.parse(fs.readFileSync(job.stateFile, "utf8"));
-        const status = state.exitCode === 0 ? "completed" : "failed";
-        return {
-          ...job,
-          status,
-          exitCode: state.exitCode,
-          completedAt: state.completedAt,
-          phase: status === "completed" ? "done" : "failed"
-        };
+        if (state.exitCode !== undefined) {
+          const status = state.exitCode === 0 ? "completed" : "failed";
+          return {
+            ...job,
+            status,
+            exitCode: state.exitCode,
+            completedAt: state.completedAt,
+            phase: status === "completed" ? "done" : "failed"
+          };
+        }
       } catch {
         // State file not written yet — check PID
       }

@@ -168,11 +168,11 @@ async function handleTask(argv) {
       promptStream.pipe(child.stdin);
       
       // Record actual child PID for better cancellation
-      fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ pid: child.pid, status: "running" }));
+      fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ childPid: child.pid, status: "running" }));
       
       child.on("close", (code) => {
         fs.closeSync(logFd);
-        fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ exitCode: code, completedAt: new Date().toISOString(), pid: child.pid }));
+        fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ exitCode: code, completedAt: new Date().toISOString(), childPid: child.pid }));
         fs.rmSync(${JSON.stringify(tempDir)}, { recursive: true, force: true });
       });
     `;
@@ -190,7 +190,7 @@ async function handleTask(argv) {
       title,
       summary,
       status: "running",
-      wrapperPid: child.pid,
+      pid: child.pid,
       startedAt: nowIso(),
       logFile,
       stateFile
@@ -280,11 +280,11 @@ async function handleReviewCommand(argv, config) {
       promptStream.pipe(child.stdin);
       
       // Record actual child PID for better cancellation
-      fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ pid: child.pid, status: "running" }));
+      fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ childPid: child.pid, status: "running" }));
 
       child.on("close", (code) => {
         fs.closeSync(logFd);
-        fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ exitCode: code, completedAt: new Date().toISOString(), pid: child.pid }));
+        fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ exitCode: code, completedAt: new Date().toISOString(), childPid: child.pid }));
         fs.rmSync(${JSON.stringify(tempDir)}, { recursive: true, force: true });
       });
     `;
@@ -302,7 +302,7 @@ async function handleReviewCommand(argv, config) {
       title,
       summary,
       status: "running",
-      wrapperPid: child.pid,
+      pid: child.pid,
       startedAt: nowIso(),
       logFile,
       stateFile
@@ -378,18 +378,18 @@ function handleCancel(argv) {
   const job = resolveCancelableJob(workspaceRoot, reference);
 
   // Try to find the actual child PID from the state file
-  let pidToKill = job.pid || job.wrapperPid;
+  let pidToKill = job.pid;
   if (job.stateFile) {
     try {
       const state = JSON.parse(fs.readFileSync(job.stateFile, "utf8"));
-      if (state.pid) pidToKill = state.pid;
+      if (state.childPid) pidToKill = state.childPid;
     } catch { /* ignore */ }
   }
 
   terminateProcessTree(pidToKill);
-  // Also kill the wrapper if it's different
-  if (job.wrapperPid && job.wrapperPid !== pidToKill) {
-    terminateProcessTree(job.wrapperPid);
+  // Also kill the wrapper if it's the main job PID
+  if (job.pid && job.pid !== pidToKill) {
+    terminateProcessTree(job.pid);
   }
 
   const completedAt = nowIso();
