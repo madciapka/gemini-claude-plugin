@@ -1,7 +1,4 @@
 import { execFileSync, spawn } from "node:child_process";
-import { writeFileSync, unlinkSync, mkdtempSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 const GEMINI_BINARY = "gemini";
 
@@ -52,13 +49,94 @@ export function buildGeminiArgs({ model, approvalMode, sandbox, outputFormat }) 
   return args;
 }
 
+// Gemini sometimes prefixes JSON output with deprecation warnings or other
+// noise. Find the first balanced JSON object and parse just that.
+function extractFirstJsonObject(text) {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === "\\" && inString) { escape = true; continue; }
+    if (ch === "\"") { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+export function parseGeminiJsonResult(stdout) {
+  const parsed = extractFirstJsonObject(stdout);
+  if (!parsed) return null;
+  const modelEntry = parsed.stats?.models ? Object.entries(parsed.stats.models)[0] : null;
+  const modelName = modelEntry?.[0] ?? null;
+  const tokens = modelEntry?.[1]?.tokens ?? null;
+  const api = modelEntry?.[1]?.api ?? null;
+  return {
+    sessionId: parsed.session_id ?? null,
+    response: parsed.response ?? "",
+    error: parsed.error ?? null,
+    model: modelName,
+    usage: tokens
+      ? {
+          input: tokens.input ?? null,
+          output: tokens.candidates ?? null,
+          thoughts: tokens.thoughts ?? null,
+          total: tokens.total ?? null,
+          cached: tokens.cached ?? null
+        }
+      : null,
+    durationMs: api?.totalLatencyMs ?? null,
+    raw: parsed
+  };
+}
+
+// Splits a buffer into complete NDJSON lines, returning parsed events plus the
+// remainder. Skips blank lines and unparseable lines (yields them as `noise`).
+export function consumeStreamLines(buffer) {
+  const events = [];
+  const noise = [];
+  let cursor = 0;
+  while (true) {
+    const newline = buffer.indexOf("\n", cursor);
+    if (newline < 0) break;
+    const line = buffer.slice(cursor, newline).trim();
+    cursor = newline + 1;
+    if (!line) continue;
+    if (line.startsWith("{")) {
+      try {
+        events.push(JSON.parse(line));
+        continue;
+      } catch {
+        // fall through to noise
+      }
+    }
+    noise.push(line);
+  }
+  return { events, noise, remainder: buffer.slice(cursor) };
+}
+
 export function runGeminiHeadless(options = {}) {
+  const outputFormat = options.outputFormat ?? "text";
   return new Promise((resolve, reject) => {
     const args = buildGeminiArgs({
       model: options.model ?? null,
       approvalMode: options.approvalMode ?? "auto_edit",
       sandbox: options.sandbox ?? false,
-      outputFormat: options.outputFormat ?? "text"
+      outputFormat
     });
 
     const child = spawn(GEMINI_BINARY, args, {
@@ -72,11 +150,18 @@ export function runGeminiHeadless(options = {}) {
 
     let stdout = "";
     let stderr = "";
+    let streamBuffer = "";
 
     child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-      if (options.onProgress) {
-        options.onProgress(chunk.toString());
+      const text = chunk.toString();
+      stdout += text;
+      if (outputFormat === "stream-json" && options.onStreamEvent) {
+        streamBuffer += text;
+        const { events, remainder } = consumeStreamLines(streamBuffer);
+        streamBuffer = remainder;
+        for (const event of events) options.onStreamEvent(event);
+      } else if (options.onProgress) {
+        options.onProgress(text);
       }
     });
 
@@ -89,40 +174,18 @@ export function runGeminiHeadless(options = {}) {
     });
 
     child.on("close", (code) => {
-      resolve({
+      const result = {
         status: code === 0 ? "completed" : "failed",
         exitCode: code,
         stdout: stdout.trimEnd(),
         stderr: stderr.trimEnd(),
-        pid: child.pid
-      });
+        pid: child.pid,
+        outputFormat
+      };
+      if (outputFormat === "json") {
+        result.parsed = parseGeminiJsonResult(stdout);
+      }
+      resolve(result);
     });
   });
-}
-
-export function spawnGeminiDetached(options = {}) {
-  const args = buildGeminiArgs({
-    model: options.model ?? null,
-    approvalMode: options.approvalMode ?? "auto_edit",
-    sandbox: options.sandbox ?? false,
-    outputFormat: options.outputFormat ?? "text"
-  });
-
-  // For detached processes, write prompt to a temp file and pipe it in via shell,
-  // since we can't write to stdin of a detached/unref'd process reliably.
-  const tempDir = mkdtempSync(join(tmpdir(), "gemini-prompt-"));
-  const promptFile = join(tempDir, "prompt.txt");
-  writeFileSync(promptFile, options.prompt);
-
-  const shellCmd = `"${GEMINI_BINARY}" ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")} < "${promptFile}"; rm -rf "${tempDir}"`;
-
-  const child = spawn("sh", ["-c", shellCmd], {
-    cwd: options.cwd ?? process.cwd(),
-    env: process.env,
-    detached: true,
-    stdio: ["ignore", options.stdoutFd ?? "ignore", options.stderrFd ?? "ignore"]
-  });
-
-  child.unref();
-  return child;
 }

@@ -18,6 +18,46 @@ function indexFilePath(workspaceRoot) {
   return path.join(stateDir(workspaceRoot), "jobs-index.json");
 }
 
+export function logsDir(workspaceRoot) {
+  return path.join(stateDir(workspaceRoot), "logs");
+}
+
+export function deleteJobArtifacts(workspaceRoot, jobId) {
+  for (const file of [
+    jobFilePath(workspaceRoot, jobId),
+    path.join(logsDir(workspaceRoot), `${jobId}.log`),
+    path.join(logsDir(workspaceRoot), `${jobId}.state.json`),
+    path.join(logsDir(workspaceRoot), `${jobId}.events.jsonl`)
+  ]) {
+    try { fs.unlinkSync(file); } catch { /* ignore */ }
+  }
+}
+
+export function pruneJobs(workspaceRoot, { maxAgeMs = 7 * 24 * 60 * 60 * 1000, maxJobs = 50 } = {}) {
+  const index = loadJobIndex(workspaceRoot);
+  const now = Date.now();
+  const sorted = [...index.jobs].sort((a, b) => {
+    const ta = new Date(a.startedAt ?? a.completedAt ?? 0).getTime();
+    const tb = new Date(b.startedAt ?? b.completedAt ?? 0).getTime();
+    return tb - ta;
+  });
+  const kept = [];
+  const removed = [];
+  for (const [i, job] of sorted.entries()) {
+    const age = now - new Date(job.startedAt ?? job.completedAt ?? 0).getTime();
+    const isActive = job.status === "running" || job.status === "queued";
+    if (isActive) { kept.push(job); continue; }
+    if (i >= maxJobs || age > maxAgeMs) {
+      removed.push(job.id);
+      deleteJobArtifacts(workspaceRoot, job.id);
+      continue;
+    }
+    kept.push(job);
+  }
+  saveJobIndex(workspaceRoot, { jobs: kept });
+  return { kept: kept.length, removed };
+}
+
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }

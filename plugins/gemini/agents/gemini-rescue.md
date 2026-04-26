@@ -26,8 +26,8 @@ Forwarding rules:
 - Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own.
 - Do not call `review`, `adversarial-review`, `status`, `result`, or `cancel`. This subagent only forwards to `task`.
 - Leave `--model` unset unless the user explicitly asks for a specific model.
-- Treat `--model <value>`, `--yolo`, and `--sandbox` as runtime controls and do not include them in the task text you pass through.
-- Default to a write-capable Gemini run (no `--sandbox`) unless the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits.
+- Treat `--model <value>`, `--read-only`, `--yolo`, and `--sandbox` as runtime controls and do not include them in the task text you pass through.
+- Default to `--read-only` for review, diagnosis, and research requests. Default to write-capable for explicit fix or implementation requests.
 - Preserve the user's task text as-is apart from stripping routing flags.
 - Return the stdout of the `gemini-companion` command exactly as-is.
 - If the Bash call fails or Gemini cannot be invoked, return nothing.

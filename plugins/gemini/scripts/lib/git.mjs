@@ -133,3 +133,48 @@ export function collectReviewContext(cwd, target) {
   const diff = collectReviewDiff(cwd, target);
   return { branch, target, diff };
 }
+
+export function getChangedFiles(cwd, target) {
+  try {
+    const args = target.mode === "working-tree"
+      ? ["status", "--porcelain=1", "--untracked-files=all"]
+      : ["diff", "--name-only", `${target.baseRef}...HEAD`];
+    const out = execFileSync("git", args, {
+      cwd, encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+    if (!out) return [];
+    if (target.mode === "working-tree") {
+      return out.split("\n").map((l) => l.slice(3).trim()).filter(Boolean);
+    }
+    return out.split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export function collectFileDiff(cwd, target, file) {
+  try {
+    if (target.mode === "working-tree") {
+      const staged = execFileSync("git", ["diff", "--cached", "--", file], {
+        cwd, encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"]
+      });
+      const unstaged = execFileSync("git", ["diff", "--", file], {
+        cwd, encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"]
+      });
+      let untracked = "";
+      try {
+        untracked = execFileSync("git", ["diff", "--no-index", "/dev/null", file], {
+          cwd, encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"]
+        });
+      } catch (error) {
+        if (error.stdout) untracked = error.stdout;
+      }
+      return [staged, unstaged, untracked].filter(Boolean).join("\n").trim();
+    }
+    return execFileSync("git", ["diff", `${target.baseRef}...HEAD`, "--", file], {
+      cwd, encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+  } catch {
+    return "";
+  }
+}

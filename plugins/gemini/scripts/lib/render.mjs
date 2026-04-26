@@ -109,16 +109,35 @@ export function renderJobStatusReport(job) {
   lines.push(`## Job: ${job.id}\n`);
   lines.push(`- **Kind**: ${job.kind}`);
   lines.push(`- **Status**: ${job.status}`);
+  if (job.phase) {
+    lines.push(`- **Phase**: ${job.phase}`);
+  }
   lines.push(`- **Title**: ${job.title ?? "-"}`);
   lines.push(`- **Summary**: ${job.summary ?? "-"}`);
+  if (job.model) {
+    lines.push(`- **Model**: ${job.model}`);
+  }
+  if (job.outputFormat) {
+    lines.push(`- **Output**: ${job.outputFormat}`);
+  }
   if (job.startedAt) {
     lines.push(`- **Started**: ${job.startedAt}`);
+  }
+  if (job.lastHeartbeatAt) {
+    lines.push(`- **Last heartbeat**: ${job.lastHeartbeatAt}`);
   }
   if (job.completedAt) {
     lines.push(`- **Completed**: ${job.completedAt}`);
   }
-  if (job.errorMessage) {
+  if (job.error) {
+    lines.push(`- **Error**: ${job.error}`);
+  } else if (job.errorMessage) {
     lines.push(`- **Error**: ${job.errorMessage}`);
+  }
+  if (job.eventsFile) {
+    lines.push(`- **Events**: ${job.eventsFile}`);
+  } else if (job.logFile) {
+    lines.push(`- **Log**: ${job.logFile}`);
   }
   return lines.join("\n") + "\n";
 }
