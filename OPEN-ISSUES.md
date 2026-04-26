@@ -76,14 +76,24 @@ Even ignoring discovery, no one has actually run `/gemini:rescue-stream --read-o
 - `plugins/gemini/tests/README.md` — how to run the suites.
 - `.claude-plugin/marketplace.json`, `plugins/gemini/.claude-plugin/plugin.json` — plugin metadata.
 
-## Suggested order of attack on resume
+## CONFIRMED — full Claude Code restart did NOT fix it
 
-1. **Restart Claude Code fully** (not `/reload-plugins`). If `/gemini:rescue-stream` then appears, the discovery limitation is the only blocker.
-2. If still unknown, run `/gemini:probe` after restart. If the probe is also unknown, the issue is at the plugin/marketplace registration level — investigate whether commands need explicit listing somewhere, or whether the loader requires a specific filename pattern beyond `commands/*.md`.
-3. Once the command loads, exercise the agent and `Monitor` integration end-to-end. If `Monitor` fails, switch the agent to `Bash run_in_background` + polling.
-4. Update repo root `README.md` and add a CHANGELOG entry for `1.1.0`.
-5. Throw a real >600 KB diff at `/gemini:review` to validate the chunking branch.
+Update from the user (2026-04-26): a brand new Claude Code session does not see `/gemini:rescue-stream` either. So the "maybe `/reload-plugins` doesn't pick up new files, restart will fix it" hypothesis is **wrong**. The command is rejected by the plugin loader for a reason that is not yet understood.
 
-## Don't lose
+This means at least one of the following is true and untested by the assistant:
 
-The runtime work is solid, automated, and Gemini-reviewed. All four of Gemini's findings (CRITICAL × 2, HIGH × 1, MEDIUM × 1) are fixed and gated by regression tests. If discovery is the only thing standing between you and a working Tier 3 path, the cost of finishing is small. Don't restart from scratch.
+- New `commands/*.md` files require some registration step beyond just being on disk (a manifest entry, an explicit list, a generated index).
+- The loader has an undocumented filename / naming rule that `rescue-stream.md` violates (hyphen? length? collision with a sibling whose stem is a prefix of this one?).
+- The loader has a per-plugin command count cap, an alphabetical / ordering quirk, or some other constraint not surfaced in the docs.
+- The plugin was installed from a different copy than this working tree, so changes here are landing on a path Claude Code is not reading. **Verify which directory the active gemini plugin is loaded from before doing anything else.**
+
+The assistant's previous suggestions (`/plugin reload`, `/reload-plugins`, restart, version bump, removing `Monitor` from `allowed-tools`) were guesses based on docs the assistant had not verified against the actual loader. None of them solved the problem. **Treat the assistant's prior plugin/command discovery advice as unreliable and start from scratch on this question.**
+
+## What to actually do when picking this up
+
+1. **Find where Claude Code is loading the gemini plugin from.** Likely candidates: `~/.claude/plugins/`, `~/Library/Application Support/Claude/plugins/`, a symlink under `~/.claude-plugins/`, or the marketplace path inside this repo. `find ~ -name marketplace.json 2>/dev/null` is a starting point. Until this is known, *no* file edit in this repo is guaranteed to be observed by Claude Code.
+2. **Inspect the running plugin's actual `commands/` directory.** Compare to this repo's `plugins/gemini/commands/`. If they differ, that explains everything — the install is stale.
+3. **If the install is stale**, figure out the right way to install/update a plugin from a local source for this Claude Code build. Reinstall, then check.
+4. **Only after `/gemini:rescue-stream` actually surfaces** is it worth touching the agent contract, the README, the >600 KB review path, or anything else. Until then, the runtime is unreachable from Claude Code regardless of how good it is.
+
+The runtime code itself (everything under `plugins/gemini/scripts/`) is solid and tested. The discovery / installation problem is independent of the runtime and needs someone who actually knows this Claude Code build's plugin model.
