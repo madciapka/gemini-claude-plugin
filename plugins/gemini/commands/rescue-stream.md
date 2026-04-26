@@ -2,7 +2,7 @@
 description: Delegate to Gemini and stream its events back to Claude as they happen
 argument-hint: "[--model <model>] [--read-only|--yolo|--sandbox] [what Gemini should investigate, solve, or research]"
 context: fork
-allowed-tools: Bash(node:*), Monitor
+allowed-tools: Bash(node:*)
 ---
 
 Use this when the Gemini run is **long, open-ended, or write-capable** and you want Claude to react to interim progress (file edits, tool calls, partial findings) instead of waiting for one final blob.

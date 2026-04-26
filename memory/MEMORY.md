@@ -1,0 +1,1 @@
+- [Claude Code plugin reload command](claude-code-reload.md) — `/reload-plugins` refreshes plugins in place; `/plugin reload` is not a real command.
