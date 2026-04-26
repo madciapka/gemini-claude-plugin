@@ -50,29 +50,34 @@ export function buildGeminiArgs({ model, approvalMode, sandbox, outputFormat }) 
 }
 
 // Gemini sometimes prefixes JSON output with deprecation warnings or other
-// noise. Find the first balanced JSON object and parse just that.
+// noise that may itself contain balanced `{...}`. Walk the buffer, try every
+// balanced object as JSON, and return the first one that parses cleanly.
 function extractFirstJsonObject(text) {
-  const start = text.indexOf("{");
-  if (start < 0) return null;
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-  for (let i = start; i < text.length; i += 1) {
-    const ch = text[i];
-    if (escape) { escape = false; continue; }
-    if (ch === "\\" && inString) { escape = true; continue; }
-    if (ch === "\"") { inString = !inString; continue; }
-    if (inString) continue;
-    if (ch === "{") depth += 1;
-    else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        try {
-          return JSON.parse(text.slice(start, i + 1));
-        } catch {
-          return null;
-        }
+  let cursor = 0;
+  while (cursor < text.length) {
+    const start = text.indexOf("{", cursor);
+    if (start < 0) return null;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    let matched = -1;
+    for (let i = start; i < text.length; i += 1) {
+      const ch = text[i];
+      if (escape) { escape = false; continue; }
+      if (ch === "\\" && inString) { escape = true; continue; }
+      if (ch === "\"") { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === "{") depth += 1;
+      else if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) { matched = i; break; }
       }
+    }
+    if (matched < 0) return null;
+    try {
+      return JSON.parse(text.slice(start, matched + 1));
+    } catch {
+      cursor = start + 1;
     }
   }
   return null;
@@ -102,6 +107,26 @@ export function parseGeminiJsonResult(stdout) {
     durationMs: api?.totalLatencyMs ?? null,
     raw: parsed
   };
+}
+
+// Pulls the final user-facing response out of a stream-json log/buffer.
+// Prefers an event with `type === "complete"` carrying a `response` field,
+// otherwise falls back to concatenated `message` content.
+export function extractStreamJsonResponse(text) {
+  const events = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    try { events.push(JSON.parse(trimmed)); } catch { /* skip noise */ }
+  }
+  if (events.length === 0) return null;
+  const complete = events.find((e) => e.type === "complete" && typeof e.response === "string");
+  if (complete) return { response: complete.response, events };
+  const messages = events
+    .filter((e) => e.type === "message" && (typeof e.content === "string" || typeof e.text === "string"))
+    .map((e) => e.content ?? e.text);
+  if (messages.length > 0) return { response: messages.join(""), events };
+  return { response: "", events };
 }
 
 // Splits a buffer into complete NDJSON lines, returning parsed events plus the

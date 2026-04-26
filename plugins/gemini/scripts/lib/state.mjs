@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { isProcessAlive } from "./process.mjs";
 
 function stateDir(workspaceRoot) {
   return path.join(workspaceRoot, ".gemini-companion");
@@ -43,11 +44,20 @@ export function pruneJobs(workspaceRoot, { maxAgeMs = 7 * 24 * 60 * 60 * 1000, m
   });
   const kept = [];
   const removed = [];
-  for (const [i, job] of sorted.entries()) {
+  let liveCount = 0;
+  for (const job of sorted) {
     const age = now - new Date(job.startedAt ?? job.completedAt ?? 0).getTime();
-    const isActive = job.status === "running" || job.status === "queued";
-    if (isActive) { kept.push(job); continue; }
-    if (i >= maxJobs || age > maxAgeMs) {
+    // Treat status as a hint, not truth. A job whose PID is gone has crashed
+    // or been killed — verify before exempting it from pruning, otherwise
+    // zombie "running" rows leak forever and starve genuine completed jobs out
+    // of the index once they push past `maxJobs`.
+    const liveByPid = (job.status === "running" || job.status === "queued") && job.pid && isProcessAlive(job.pid);
+    if (liveByPid) {
+      kept.push(job);
+      liveCount += 1;
+      continue;
+    }
+    if (liveCount + kept.length >= maxJobs || age > maxAgeMs) {
       removed.push(job.id);
       deleteJobArtifacts(workspaceRoot, job.id);
       continue;

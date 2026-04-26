@@ -38,7 +38,8 @@ export default function (t) {
     const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const fresh = new Date().toISOString();
     upsertJob(root, { id: "old-completed", status: "completed", startedAt: old, completedAt: old });
-    upsertJob(root, { id: "running", status: "running", startedAt: old, pid: 1 });
+    // Use `process.pid` so liveness check passes — pruning is now PID-aware.
+    upsertJob(root, { id: "running", status: "running", startedAt: old, pid: process.pid });
     upsertJob(root, { id: "fresh-completed", status: "completed", startedAt: fresh, completedAt: fresh });
 
     const result = pruneJobs(root);
@@ -58,6 +59,19 @@ export default function (t) {
     const index = loadJobIndex(root);
     assert.equal(index.jobs.length, 2);
     assert.deepEqual(index.jobs.map((j) => j.id), ["job-0", "job-1"]);
+  });
+
+  t.test("pruneJobs reaps zombie 'running' jobs whose PID is gone", () => {
+    // Regression for Gemini-flagged issue: status==="running" alone shouldn't
+    // exempt a job from pruning forever — verify PID liveness.
+    const root = tempWorkspace();
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    upsertJob(root, { id: "zombie", status: "running", startedAt: old, pid: 999999 });
+    upsertJob(root, { id: "alive", status: "running", startedAt: old, pid: process.pid });
+    const result = pruneJobs(root);
+    assert.deepEqual(result.removed, ["zombie"]);
+    const index = loadJobIndex(root);
+    assert.deepEqual(index.jobs.map((j) => j.id), ["alive"]);
   });
 
   t.test("deleteJobArtifacts cleans log/state/event/job files", () => {

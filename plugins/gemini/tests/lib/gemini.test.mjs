@@ -1,7 +1,8 @@
 import { strict as assert } from "node:assert";
 import {
   parseGeminiJsonResult,
-  consumeStreamLines
+  consumeStreamLines,
+  extractStreamJsonResponse
 } from "../../scripts/lib/gemini.mjs";
 
 export default function (t) {
@@ -57,5 +58,37 @@ export default function (t) {
     assert.equal(events.length, 0);
     assert.equal(remainder, "");
     assert.equal(noise.length, 0);
+  });
+
+  t.test("parseGeminiJsonResult skips a leading {error}-shaped warning before the real envelope", () => {
+    // Regression: a noise object like `{error: ignored}` must not poison parsing.
+    // The real envelope follows; the parser must keep walking after a parse failure.
+    const stdout = `Note: {ignore} this {weird literal}\n{"session_id":"s","response":"real","stats":{}}`;
+    const parsed = parseGeminiJsonResult(stdout);
+    assert.ok(parsed, "parser should fall through to real envelope");
+    assert.equal(parsed.response, "real");
+  });
+
+  t.test("extractStreamJsonResponse returns the complete-event response", () => {
+    const text = [
+      `{"type":"init","session_id":"a"}`,
+      `{"type":"message","content":"hello "}`,
+      `{"type":"message","content":"world"}`,
+      `{"type":"complete","response":"hello world"}`
+    ].join("\n");
+    const result = extractStreamJsonResponse(text);
+    assert.equal(result.response, "hello world");
+    assert.equal(result.events.length, 4);
+  });
+
+  t.test("extractStreamJsonResponse falls back to concatenated messages when no complete event", () => {
+    const text = `{"type":"init"}\n{"type":"message","content":"foo"}\n{"type":"message","content":"bar"}`;
+    const result = extractStreamJsonResponse(text);
+    assert.equal(result.response, "foobar");
+  });
+
+  t.test("extractStreamJsonResponse returns null for empty input", () => {
+    assert.equal(extractStreamJsonResponse(""), null);
+    assert.equal(extractStreamJsonResponse("not json\n"), null);
   });
 }

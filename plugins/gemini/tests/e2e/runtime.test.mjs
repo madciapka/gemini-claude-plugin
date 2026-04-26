@@ -144,6 +144,46 @@ export default function (t) {
     assert.match(result.stdout, /Nothing to review|No changes/);
   }, LIVE);
 
+  // ─── Tail respects terminal status, not file existence ───
+  t.test("tail waits for terminal status before exiting (regression)", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "gemini-e2e-tail-"));
+    const launch = runCompanion(["task", "--background", "--read-only", "Reply with: tailed"], { cwd });
+    assert.equal(launch.status, 0, launch.stderr);
+    const jobId = (launch.stdout.match(/task-[a-z0-9-]+/) ?? [])[0];
+
+    // Spawn tail and capture its full output. It should NOT exit immediately
+    // (the wrapper writes the state file at startup with status:"running").
+    const start = Date.now();
+    const tail = spawnSync(process.execPath, [COMPANION, "tail", jobId], {
+      cwd, env: process.env, encoding: "utf8", timeout: 180_000
+    });
+    const elapsed = Date.now() - start;
+    assert.equal(tail.status, 0, tail.stderr);
+    assert.ok(elapsed > 1500, `tail returned in ${elapsed}ms — too fast, likely the early-exit bug`);
+    assert.match(tail.stdout, /\[job (completed|failed)\]/);
+  }, LIVE);
+
+  // ─── Result for streamed jobs ───
+  t.test("result on a stream-json job returns the final response (regression)", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "gemini-e2e-streamres-"));
+    const launch = runCompanion(["task", "--stream", "--read-only", "Reply with exactly: streamresult"], { cwd });
+    const jobId = (launch.stdout.match(/task-[a-z0-9-]+/) ?? [])[0];
+    const stateFile = path.join(cwd, ".gemini-companion", "logs", `${jobId}.state.json`);
+    await waitFor(() => {
+      if (!fs.existsSync(stateFile)) return false;
+      const s = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+      return s.status === "completed" || s.status === "failed";
+    }, { timeoutMs: 180_000 });
+
+    const result = runCompanion(["result", jobId], { cwd });
+    assert.equal(result.status, 0, result.stderr);
+    // Must NOT be empty (the regression Gemini flagged: parser was returning "").
+    const idx = result.stdout.indexOf("\n\n");
+    const body = idx >= 0 ? result.stdout.slice(idx + 2) : result.stdout;
+    assert.ok(body.trim().length > 0, `result body empty: ${result.stdout}`);
+    assert.match(result.stdout.toLowerCase(), /streamresult/);
+  }, LIVE);
+
   // ─── Cancel ───
   t.test("cancel terminates a running background job", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "gemini-e2e-cancel-"));

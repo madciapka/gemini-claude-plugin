@@ -12,7 +12,8 @@ import {
   getGeminiAuthStatus,
   buildGeminiArgs,
   runGeminiHeadless,
-  parseGeminiJsonResult
+  parseGeminiJsonResult,
+  extractStreamJsonResponse
 } from "./lib/gemini.mjs";
 import {
   ensureGitRepository,
@@ -472,11 +473,20 @@ function handleResult(argv) {
   const { job, stored } = resolveResultJob(workspaceRoot, reference);
 
   let output = stored?.output ?? null;
-  if (!output && (stored?.logFile || job.logFile)) {
+  const sourceFile = stored?.logFile ?? job.logFile;
+  if (!output && sourceFile) {
     try {
-      const raw = fs.readFileSync(stored?.logFile ?? job.logFile, "utf8");
-      const parsed = parseGeminiJsonResult(raw);
-      output = parsed?.response ?? raw;
+      const raw = fs.readFileSync(sourceFile, "utf8");
+      // Streamed jobs write NDJSON, not a single JSON envelope. Pull the
+      // complete-event response (or concatenated messages) instead of letting
+      // the JSON-envelope parser swallow only the {init} line.
+      if (job.outputFormat === "stream-json") {
+        const stream = extractStreamJsonResponse(raw);
+        output = stream?.response || raw;
+      } else {
+        const parsed = parseGeminiJsonResult(raw);
+        output = parsed?.response || raw;
+      }
     } catch { /* ignore */ }
   }
 
@@ -505,7 +515,7 @@ function handleTail(argv) {
 
   let position = 0;
   let stopped = false;
-  const interval = setInterval(() => {
+  const flush = () => {
     try {
       const stat = fs.statSync(file);
       if (stat.size > position) {
@@ -517,12 +527,22 @@ function handleTail(argv) {
         process.stdout.write(buffer.toString("utf8"));
       }
     } catch { /* file may not exist yet */ }
-
-    if (fs.existsSync(job.stateFile) && !stopped) {
-      stopped = true;
-      clearInterval(interval);
-      process.stdout.write("\n[job complete]\n");
-    }
+  };
+  const interval = setInterval(() => {
+    if (stopped) return;
+    flush();
+    // The wrapper writes the state file at startup with status:"running" and
+    // overwrites it on completion. Tail must wait for a terminal status, not
+    // mere file existence.
+    try {
+      const state = JSON.parse(fs.readFileSync(job.stateFile, "utf8"));
+      if (state.status === "completed" || state.status === "failed" || state.status === "cancelled") {
+        stopped = true;
+        clearInterval(interval);
+        flush(); // final read after completion to catch trailing bytes
+        process.stdout.write(`\n[job ${state.status}]\n`);
+      }
+    } catch { /* state file not yet readable */ }
   }, 250);
 }
 
