@@ -14,15 +14,15 @@ $ARGUMENTS
 
 Operating contract:
 
-- Run exactly one Bash call to launch the streamed background job:
+- Run a Bash call to launch the streamed background job:
   ```bash
   node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" task --stream "$ARGUMENTS"
   ```
   The companion prints a JSON-ish payload (`jobId`, `eventsFile`, `logFile`).
 - Capture the `jobId` and `eventsFile` from that output.
-- Use the `Monitor` tool against `eventsFile` (preferred) or `logFile` to receive each new line as a notification while Gemini works.
+- Tail the job with `node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" tail "$jobId"` (`run_in_background: true`) and read new lines via `BashOutput` periodically. **Do not use raw `tail -F`** — it leaks. The companion's `tail` exits on terminal job status.
 - Each event line is JSON-line (`stream-json`). Common `type` values include `init`, `message`, `tool_use`, `error`. Treat lines that fail to parse as raw progress text.
-- Stop monitoring when an event with `type == "complete"` arrives, when the file pointer stops growing for >30s, or when the user interrupts.
+- The companion's `tail` exits on its own when the job is `completed` / `failed` / `cancelled`. If it's still running after 30 s with no new lines, surface a stall.
 - After completion, fetch the final response with:
   ```bash
   node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" result <jobId>
