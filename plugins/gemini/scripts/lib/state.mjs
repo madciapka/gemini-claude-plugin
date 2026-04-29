@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { isProcessAlive } from "./process.mjs";
 
 function stateDir(workspaceRoot) {
   return path.join(workspaceRoot, ".gemini-companion");
@@ -16,6 +17,55 @@ function jobFilePath(workspaceRoot, jobId) {
 
 function indexFilePath(workspaceRoot) {
   return path.join(stateDir(workspaceRoot), "jobs-index.json");
+}
+
+export function logsDir(workspaceRoot) {
+  return path.join(stateDir(workspaceRoot), "logs");
+}
+
+export function deleteJobArtifacts(workspaceRoot, jobId) {
+  for (const file of [
+    jobFilePath(workspaceRoot, jobId),
+    path.join(logsDir(workspaceRoot), `${jobId}.log`),
+    path.join(logsDir(workspaceRoot), `${jobId}.state.json`),
+    path.join(logsDir(workspaceRoot), `${jobId}.events.jsonl`)
+  ]) {
+    try { fs.unlinkSync(file); } catch { /* ignore */ }
+  }
+}
+
+export function pruneJobs(workspaceRoot, { maxAgeMs = 7 * 24 * 60 * 60 * 1000, maxJobs = 50 } = {}) {
+  const index = loadJobIndex(workspaceRoot);
+  const now = Date.now();
+  const sorted = [...index.jobs].sort((a, b) => {
+    const ta = new Date(a.startedAt ?? a.completedAt ?? 0).getTime();
+    const tb = new Date(b.startedAt ?? b.completedAt ?? 0).getTime();
+    return tb - ta;
+  });
+  const kept = [];
+  const removed = [];
+  let liveCount = 0;
+  for (const job of sorted) {
+    const age = now - new Date(job.startedAt ?? job.completedAt ?? 0).getTime();
+    // Treat status as a hint, not truth. A job whose PID is gone has crashed
+    // or been killed — verify before exempting it from pruning, otherwise
+    // zombie "running" rows leak forever and starve genuine completed jobs out
+    // of the index once they push past `maxJobs`.
+    const liveByPid = (job.status === "running" || job.status === "queued") && job.pid && isProcessAlive(job.pid);
+    if (liveByPid) {
+      kept.push(job);
+      liveCount += 1;
+      continue;
+    }
+    if (liveCount + kept.length >= maxJobs || age > maxAgeMs) {
+      removed.push(job.id);
+      deleteJobArtifacts(workspaceRoot, job.id);
+      continue;
+    }
+    kept.push(job);
+  }
+  saveJobIndex(workspaceRoot, { jobs: kept });
+  return { kept: kept.length, removed };
 }
 
 function ensureDir(dir) {

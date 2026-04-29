@@ -22,3 +22,8 @@ node_modules/
 .env.*
 *.key
 *.pem
+
+# Local-only working notes (issue tracker, scratch files, agent traces)
+OPEN-ISSUES.md
+/tmp-*
+/scratch-*

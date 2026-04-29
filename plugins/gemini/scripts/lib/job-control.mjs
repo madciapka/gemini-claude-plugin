@@ -40,22 +40,33 @@ export function resolveResultJob(workspaceRoot, reference) {
   return { job, stored: readJobFile(workspaceRoot, job.id) };
 }
 
+const STALL_THRESHOLD_MS = 30_000;
+
 export function enrichJobStatus(job) {
   if ((job.status === "running" || job.status === "queued") && job.pid) {
-    // Check for a state file written by the background wrapper on completion
     if (job.stateFile) {
       try {
         const state = JSON.parse(fs.readFileSync(job.stateFile, "utf8"));
-        const status = state.exitCode === 0 ? "completed" : "failed";
+        if (state.status === "completed" || state.status === "failed") {
+          return {
+            ...job,
+            status: state.status,
+            exitCode: state.exitCode,
+            completedAt: state.completedAt,
+            error: state.error ?? null,
+            phase: state.status === "completed" ? "done" : "failed"
+          };
+        }
+        // Still running — check heartbeat freshness.
+        const last = state.lastHeartbeatAt ? new Date(state.lastHeartbeatAt).getTime() : null;
+        const stalled = last && (Date.now() - last) > STALL_THRESHOLD_MS;
         return {
           ...job,
-          status,
-          exitCode: state.exitCode,
-          completedAt: state.completedAt,
-          phase: status === "completed" ? "done" : "failed"
+          lastHeartbeatAt: state.lastHeartbeatAt ?? null,
+          phase: stalled ? `stalled (no heartbeat for ${Math.round((Date.now() - last) / 1000)}s)` : "running"
         };
       } catch {
-        // State file not written yet — check PID
+        // State file not written yet — fall through to PID check
       }
     }
     if (!isProcessAlive(job.pid)) {
