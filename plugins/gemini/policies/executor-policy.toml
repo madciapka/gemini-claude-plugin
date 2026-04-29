@@ -1,0 +1,82 @@
+# Gemini executor policy — host-side hardening for `/gemini:execute` runs.
+#
+# Loaded automatically by the companion script when `execute` spawns Gemini
+# under `--approval-mode yolo --sandbox`. Without this file, yolo mode would
+# auto-approve every tool call including destructive shell commands and
+# network egress, leaving a hostile plan or prompt-injection with full
+# blast radius across the host. With it, the listed denies are hard:
+# matching commands are removed from the model's tool memory entirely so the
+# model cannot retry under a different shape.
+#
+# Loaded at the User policy tier (priority base 4) which beats the built-in
+# yolo allow-all rule (Default tier, base 1). Final priorities are
+# `4 + (toml_priority / 1000)`, so the highest-priority deny here is
+# `4.900` — well above any default permissive rule.
+#
+# This is intentionally conservative. Tasks that need broader capability
+# should override per-task with `--no-sandbox` (host-trusted) or supply
+# their own `--policy` extension.
+
+# ── Hard-deny destructive system commands ──────────────────────────────
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = ["rm -rf ", "rm -fr ", "rm --recursive --force", "sudo ", "shutdown ", "reboot ", "halt ", "poweroff "]
+decision = "deny"
+priority = 900
+denyMessage = "Executor policy: destructive system commands (rm -rf, sudo, shutdown, etc.) are not allowed."
+
+# Block destructive git operations. Branch creation, commit, status, diff,
+# and ordinary push remain available — the executor's BRANCH POLICY needs
+# them. Force-push and history-rewriting variants are blocked.
+[[rule]]
+toolName = "run_shell_command"
+commandRegex = '^git +(push +(--force|-f|--force-with-lease)|reset +--hard|branch +-D|filter-branch|update-ref +-d|gc +--aggressive|clean +(-fd|-fdx)| *checkout +(main|master)( |$))'
+decision = "deny"
+priority = 850
+denyMessage = "Executor policy: destructive git operations (force push, hard reset, branch -D, filter-branch, clean, or touching main/master) are not allowed. Stay on the gemini-exec/* branch."
+
+# ── Hard-deny network exfiltration via shell ───────────────────────────
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = ["curl ", "wget ", "nc ", "ncat ", "netcat ", "scp ", "rsync "]
+decision = "deny"
+priority = 800
+denyMessage = "Executor policy: outbound network egress via curl/wget/nc/scp/rsync is not allowed. If a fetch is genuinely required, use the workspace's HTTP libraries inside test code."
+
+# Block remote git transport (clone/fetch/pull/push from external hosts).
+# In-workspace git operations are still allowed; this only matches commands
+# carrying an explicit URL or remote.
+[[rule]]
+toolName = "run_shell_command"
+commandRegex = '^git +(clone|fetch|pull|push) +(https?://|git@|ssh://|git://)'
+decision = "deny"
+priority = 820
+denyMessage = "Executor policy: remote git transport is not allowed. Work locally on the gemini-exec/* branch."
+
+# ── Hard-deny global package-state changes ─────────────────────────────
+# In-workspace installs (e.g. `npm install` to update package.json) remain
+# allowed. Only flags that mutate global state are blocked.
+[[rule]]
+toolName = "run_shell_command"
+commandRegex = '^(npm +(install|i) +-g|yarn +global|pnpm +add +-g|brew +(install|uninstall|tap)|pip +install +(--user|-g)|gem +install|cargo +install)'
+decision = "deny"
+priority = 700
+denyMessage = "Executor policy: global package installs (npm -g, brew, pip --user, etc.) are not allowed."
+
+# ── Hard-deny credential / secret access ───────────────────────────────
+[[rule]]
+toolName = "run_shell_command"
+commandRegex = '(\.ssh/|\.aws/|\.gcp/|\.kube/|\.gnupg/|\.netrc|/etc/passwd|/etc/shadow|security +unlock-keychain|keychain-access)'
+decision = "deny"
+priority = 880
+denyMessage = "Executor policy: access to credential / secret stores is not allowed."
+
+# ── Hard-deny writes outside the workspace ─────────────────────────────
+# The sandbox should already prevent this; the deny rule provides a second
+# line of defense and a clear error message.
+[[rule]]
+toolName = ["write_file", "replace"]
+argsPattern = '"file_path":"(/etc/|/usr/|/bin/|/sbin/|/Library/|/System/|/var/|/private/etc/|~/[.]ssh|~/[.]aws|~/[.]gcp)'
+decision = "deny"
+priority = 600
+denyMessage = "Executor policy: writes to system / credential paths are not allowed."

@@ -32,7 +32,7 @@ export function getGeminiAuthStatus(cwd) {
   }
 }
 
-export function buildGeminiArgs({ model, approvalMode, sandbox, outputFormat }) {
+export function buildGeminiArgs({ model, approvalMode, sandbox, outputFormat, policyPaths } = {}) {
   const args = [];
   if (outputFormat) {
     args.push("-o", outputFormat);
@@ -45,6 +45,11 @@ export function buildGeminiArgs({ model, approvalMode, sandbox, outputFormat }) 
   }
   if (sandbox) {
     args.push("-s");
+  }
+  if (Array.isArray(policyPaths)) {
+    for (const p of policyPaths) {
+      if (p) args.push("--policy", p);
+    }
   }
   return args;
 }
@@ -161,7 +166,8 @@ export function runGeminiHeadless(options = {}) {
       model: options.model ?? null,
       approvalMode: options.approvalMode ?? "auto_edit",
       sandbox: options.sandbox ?? false,
-      outputFormat
+      outputFormat,
+      policyPaths: options.policyPaths ?? null
     });
 
     const child = spawn(GEMINI_BINARY, args, {

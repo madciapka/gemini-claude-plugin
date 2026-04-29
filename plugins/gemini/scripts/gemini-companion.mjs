@@ -47,6 +47,14 @@ import {
 } from "./lib/job-control.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 import { resolveApprovalMode } from "./lib/approval.mjs";
+import {
+  renderExecutorEnvelope,
+  resolveTaskInput,
+  validatePlanPath,
+  buildHandoffPath,
+  jobIdToShort,
+  validateHandoffMarker
+} from "./lib/executor.mjs";
 
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 // Soft cap on prompt size sent to Gemini. Gemini accepts ~1M tokens of
@@ -60,6 +68,7 @@ function printUsage() {
     "Usage:",
     "  gemini-companion.mjs setup [--json]",
     "  gemini-companion.mjs task [--background|--stream] [--model <model>] [--read-only|--yolo|--sandbox] [prompt]",
+    "  gemini-companion.mjs execute [--no-sandbox] [--model <model>] [--wait] (<task> | @path/to/plan.md)",
     "  gemini-companion.mjs review [--base <ref>] [--scope auto|working-tree|branch]",
     "  gemini-companion.mjs adversarial-review [--base <ref>] [--scope auto|working-tree|branch] [focus ...]",
     "  gemini-companion.mjs status [job-id] [--all] [--prune]",
@@ -235,10 +244,13 @@ function launchBackgroundJob(opts) {
   const {
     workspaceRoot, cwd, kind, title, summary,
     prompt, model, approvalMode, sandbox, stream, approvalLabel,
-    target = null, reviewName = null
+    target = null, reviewName = null,
+    jobId: providedJobId = null,
+    policyPaths = null,
+    extra = null
   } = opts;
 
-  const jobId = generateJobId(kind);
+  const jobId = providedJobId ?? generateJobId(kind);
   const logsRoot = path.join(workspaceRoot, ".gemini-companion", "logs");
   fs.mkdirSync(logsRoot, { recursive: true });
   const logFile = path.join(logsRoot, `${jobId}.log`);
@@ -248,7 +260,7 @@ function launchBackgroundJob(opts) {
   fs.writeFileSync(promptFile, prompt);
 
   const outputFormat = stream ? "stream-json" : "json";
-  const args = buildGeminiArgs({ model, approvalMode, sandbox, outputFormat });
+  const args = buildGeminiArgs({ model, approvalMode, sandbox, outputFormat, policyPaths });
 
   const wrapperConfig = {
     args,
@@ -288,13 +300,169 @@ function launchBackgroundJob(opts) {
     reviewName
   };
 
+  if (extra && typeof extra === "object") {
+    Object.assign(job, extra);
+  }
+
   writeJobFile(workspaceRoot, jobId, job);
   upsertJob(workspaceRoot, job);
 
-  return {
-    job,
-    payload: { jobId, status: "running", title, summary, logFile, eventsFile, stream }
-  };
+  const payload = { jobId, status: "running", title, summary, logFile, eventsFile, stream };
+  if (extra && typeof extra === "object") {
+    Object.assign(payload, extra);
+  }
+
+  return { job, payload };
+}
+
+// ─── Execute ───
+// Autonomous executor delegation. Wraps the user's task in the executor envelope,
+// forces yolo+sandbox, and launches a streamed background job so Claude can
+// observe progress and surface the handoff file when complete.
+
+async function handleExecute(argv) {
+  const { options, positionals } = parseCommandInput(argv, {
+    valueOptions: ["model", "cwd"],
+    booleanOptions: ["json", "wait", "no-sandbox"],
+    aliasMap: { m: "model" }
+  });
+
+  const cwd = resolveCommandCwd(options);
+  const workspaceRoot = resolveWorkspaceRoot(cwd);
+  const rawTask = positionals.join(" ").trim();
+
+  const taskInput = resolveTaskInput(rawTask);
+  if (taskInput.mode === "plan-file") {
+    // Reject paths that escape the workspace or carry characters that would
+    // mangle the prompt's backtick-quoted plan reference. The path itself
+    // never reaches a shell, but a hostile path can still poison the prompt.
+    validatePlanPath(taskInput.planPath, workspaceRoot);
+  }
+
+  const jobId = generateJobId("execute");
+  const jobShortId = jobIdToShort(jobId);
+  const handoffPath = buildHandoffPath({ workspaceRoot, jobId });
+
+  // Ensure the handoff directory exists before Gemini tries to write into it.
+  // Gemini under --sandbox may not be able to mkdir outside its working tree
+  // depending on policy, so we pre-create on the host side.
+  fs.mkdirSync(path.dirname(handoffPath), { recursive: true });
+
+  const template = loadPromptTemplate("executor");
+  // System placeholders substituted first, TASK last. Prevents user text
+  // containing template-shaped strings from being rewritten with
+  // authoritative values on a later pass.
+  const prompt = renderExecutorEnvelope(
+    template,
+    { CWD: cwd, JOB_SHORT_ID: jobShortId, HANDOFF_PATH: handoffPath },
+    taskInput.taskText
+  );
+
+  const model = options.model ?? null;
+  // Executor defaults: yolo (autonomous) + sandbox (filesystem isolation) +
+  // a Gemini Policy Engine file at the User tier that hard-denies destructive
+  // shell commands, network egress, force-push-style git ops, and writes to
+  // system / credential paths. Without the policy file, yolo would auto-approve
+  // every tool call and the only safety net would be the sandbox's own
+  // filesystem boundary. With it, the deny rules win priority over yolo's
+  // built-in allow-all and stay enforced even under prompt injection.
+  const sandbox = !options["no-sandbox"];
+  const approvalMode = "yolo";
+  const approvalLabel = sandbox ? "yolo+sandbox+policy" : "yolo+policy";
+  const executorPolicyPath = path.join(ROOT_DIR, "policies", "executor-policy.toml");
+  const policyPaths = fs.existsSync(executorPolicyPath) ? [executorPolicyPath] : [];
+
+  const title = "Gemini Executor";
+  const summary = shorten(taskInput.mode === "plan-file" ? `@${taskInput.planPath}` : taskInput.taskText);
+
+  if (options.wait) {
+    // Foreground execution path. Useful for tightly-bounded tasks where the
+    // caller wants the handoff inline. Streams to TTY if available.
+    const onProgress = process.stdout.isTTY ? (chunk) => process.stdout.write(chunk) : null;
+    const result = await runGeminiHeadless({
+      prompt, model, approvalMode, sandbox, cwd,
+      outputFormat: "json", policyPaths, onProgress
+    });
+    if (onProgress && result.stdout) process.stdout.write("\n");
+
+    // Handoff is the report. Read it and validate the marker — both checks
+    // surface mismatches the wrapper would otherwise paper over.
+    const geminiOutput = result.parsed?.response ?? result.stdout ?? "";
+    const markerCheck = validateHandoffMarker(geminiOutput, handoffPath, workspaceRoot);
+    let handoffContents = null;
+    let handoffReadError = null;
+    if (fs.existsSync(handoffPath)) {
+      try {
+        handoffContents = fs.readFileSync(handoffPath, "utf8");
+      } catch (err) {
+        handoffReadError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    const payload = {
+      jobId, jobShortId, mode: taskInput.mode,
+      planPath: taskInput.planPath, handoffPath,
+      exitCode: result.exitCode,
+      response: geminiOutput,
+      stderr: result.stderr,
+      handoffExists: handoffContents !== null,
+      handoffContents,
+      handoffReadError,
+      markerCheck
+    };
+    outputResult(options.json ? payload : renderExecuteWaitResult(payload), options.json);
+    if (result.exitCode !== 0 || !payload.handoffExists) process.exitCode = 1;
+    return;
+  }
+
+  // Background+stream is the default. Reuses the same launcher as `task --stream`
+  // so all status/result/tail/cancel commands work transparently.
+  const launched = launchBackgroundJob({
+    workspaceRoot, cwd,
+    kind: "execute",
+    title, summary,
+    prompt, model,
+    approvalMode, sandbox,
+    stream: true,
+    approvalLabel,
+    jobId,
+    policyPaths,
+    extra: { handoffPath, jobShortId, planPath: taskInput.planPath, mode: taskInput.mode }
+  });
+
+  outputResult(
+    options.json ? launched.payload : renderQueuedLaunch(launched.payload),
+    options.json
+  );
+}
+
+function renderExecuteWaitResult(payload) {
+  const lines = [`## Gemini executor — ${payload.jobShortId}`];
+
+  if (payload.handoffExists) {
+    lines.push(`Handoff: ${payload.handoffPath}`);
+    if (payload.markerCheck && !payload.markerCheck.ok) {
+      lines.push(`⚠ Marker check: ${payload.markerCheck.reason}`);
+    }
+    lines.push("", "Handoff (verbatim):", "", payload.handoffContents.trimEnd());
+  } else {
+    lines.push(`⚠ Handoff NOT written at ${payload.handoffPath}`);
+    if (payload.markerCheck && payload.markerCheck.reason) {
+      lines.push(`Marker check: ${payload.markerCheck.reason}`);
+    }
+    if (payload.handoffReadError) {
+      lines.push(`Read error: ${payload.handoffReadError}`);
+    }
+    if (payload.response) {
+      lines.push("", "Gemini stdout (no handoff):", payload.response);
+    }
+  }
+
+  if (payload.exitCode !== 0) {
+    lines.push("", `_Exit code ${payload.exitCode}._`);
+    if (payload.stderr) lines.push(payload.stderr);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 // ─── Review ───
@@ -591,6 +759,9 @@ async function main() {
       break;
     case "task":
       await handleTask(argv);
+      break;
+    case "execute":
+      await handleExecute(argv);
       break;
     case "review":
       await handleReview(argv);

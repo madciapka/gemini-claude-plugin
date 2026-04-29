@@ -1,11 +1,15 @@
 ---
-description: Delegate investigation, fix, or research to Gemini and return its answer in one shot
-argument-hint: "[--background|--wait] [--model <model>] [--read-only|--yolo|--sandbox] [what Gemini should investigate, solve, or research]"
+description: Delegate diagnosis, research, or a single bounded answer to Gemini in one shot — read-only by default. For autonomous file changes use /gemini:execute.
+argument-hint: "[--background|--wait] [--model <model>] [--read-only|--yolo|--sandbox] [what Gemini should investigate or research]"
 context: fork
 allowed-tools: Bash(node:*)
 ---
 
-Use this when you want Gemini's *final answer* as a single artifact — bounded research, diagnosis, or a self-contained fix. For long-running, multi-step Gemini sessions where you want Claude to react to interim progress, use `/gemini:rescue-stream` instead.
+Use this when you want Gemini's *final answer* as a single artifact — bounded research, diagnosis, or a "look at this" pass. Defaults to `--read-only`.
+
+**For autonomous file changes** (Gemini implements, verifies, writes a structured handoff), use `/gemini:execute` — that is the surface designed for write-capable delegation with self-healing. Do not pass `--yolo` to rescue as a way to get write capability; route to `/gemini:execute` instead.
+
+**For passive observation** of a long Gemini run with streamed events, use `/gemini:rescue-stream`.
 
 Route this request to the `gemini:gemini-rescue` subagent.
 The final user-visible response must be Gemini's output verbatim.

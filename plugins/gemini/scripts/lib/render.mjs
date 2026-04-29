@@ -164,5 +164,18 @@ export function renderCancelReport(job) {
 }
 
 export function renderQueuedLaunch(payload) {
-  return `${payload.title} started in the background as ${payload.jobId}. Check /gemini:status ${payload.jobId} for progress.\n`;
+  // Agents that wrap the executor / streaming surfaces depend on the launch
+  // payload exposing the artifact paths they need to tail and read. The plain
+  // text fallback used to drop everything except title+jobId, which silently
+  // broke the streaming/executor contract for any caller not opting into JSON.
+  // Surface the full set of fields the agent contracts mention.
+  const lines = [
+    `${payload.title ?? "Job"} started in the background as ${payload.jobId}.`
+  ];
+  if (payload.jobShortId) lines.push(`- shortId: ${payload.jobShortId}`);
+  if (payload.handoffPath) lines.push(`- handoffPath: ${payload.handoffPath}`);
+  if (payload.eventsFile) lines.push(`- eventsFile: ${payload.eventsFile}`);
+  if (payload.logFile) lines.push(`- logFile: ${payload.logFile}`);
+  lines.push(`Check /gemini:status ${payload.jobId} for progress.`);
+  return `${lines.join("\n")}\n`;
 }
