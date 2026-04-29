@@ -109,16 +109,35 @@ export function renderJobStatusReport(job) {
   lines.push(`## Job: ${job.id}\n`);
   lines.push(`- **Kind**: ${job.kind}`);
   lines.push(`- **Status**: ${job.status}`);
+  if (job.phase) {
+    lines.push(`- **Phase**: ${job.phase}`);
+  }
   lines.push(`- **Title**: ${job.title ?? "-"}`);
   lines.push(`- **Summary**: ${job.summary ?? "-"}`);
+  if (job.model) {
+    lines.push(`- **Model**: ${job.model}`);
+  }
+  if (job.outputFormat) {
+    lines.push(`- **Output**: ${job.outputFormat}`);
+  }
   if (job.startedAt) {
     lines.push(`- **Started**: ${job.startedAt}`);
+  }
+  if (job.lastHeartbeatAt) {
+    lines.push(`- **Last heartbeat**: ${job.lastHeartbeatAt}`);
   }
   if (job.completedAt) {
     lines.push(`- **Completed**: ${job.completedAt}`);
   }
-  if (job.errorMessage) {
+  if (job.error) {
+    lines.push(`- **Error**: ${job.error}`);
+  } else if (job.errorMessage) {
     lines.push(`- **Error**: ${job.errorMessage}`);
+  }
+  if (job.eventsFile) {
+    lines.push(`- **Events**: ${job.eventsFile}`);
+  } else if (job.logFile) {
+    lines.push(`- **Log**: ${job.logFile}`);
   }
   return lines.join("\n") + "\n";
 }
@@ -145,5 +164,18 @@ export function renderCancelReport(job) {
 }
 
 export function renderQueuedLaunch(payload) {
-  return `${payload.title} started in the background as ${payload.jobId}. Check /gemini:status ${payload.jobId} for progress.\n`;
+  // Agents that wrap the executor / streaming surfaces depend on the launch
+  // payload exposing the artifact paths they need to tail and read. The plain
+  // text fallback used to drop everything except title+jobId, which silently
+  // broke the streaming/executor contract for any caller not opting into JSON.
+  // Surface the full set of fields the agent contracts mention.
+  const lines = [
+    `${payload.title ?? "Job"} started in the background as ${payload.jobId}.`
+  ];
+  if (payload.jobShortId) lines.push(`- shortId: ${payload.jobShortId}`);
+  if (payload.handoffPath) lines.push(`- handoffPath: ${payload.handoffPath}`);
+  if (payload.eventsFile) lines.push(`- eventsFile: ${payload.eventsFile}`);
+  if (payload.logFile) lines.push(`- logFile: ${payload.logFile}`);
+  lines.push(`Check /gemini:status ${payload.jobId} for progress.`);
+  return `${lines.join("\n")}\n`;
 }

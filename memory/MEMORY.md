@@ -1,0 +1,2 @@
+- [Claude Code plugin reload command](claude-code-reload.md) — `/reload-plugins` refreshes plugins in place; `/plugin reload` is not a real command.
+- [Plugin loader requires cold start to discover new files](feedback_plugin_loader_cold_start.md) — `/reload-plugins` does NOT pick up newly added command/agent files; only a fresh session does. Verified 2026-04-29.

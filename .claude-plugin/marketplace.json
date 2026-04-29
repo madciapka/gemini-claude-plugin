@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "Gemini CLI plugin for Claude Code — delegate tasks, run reviews, and get adversarial design feedback.",
-    "version": "1.0.1"
+    "version": "1.1.0"
   },
   "plugins": [
     {
       "name": "gemini",
       "source": "./plugins/gemini",
-      "description": "Use Gemini CLI from Claude Code to delegate tasks, run code reviews, and get adversarial design feedback.",
-      "version": "1.0.1",
+      "description": "Use Gemini CLI from Claude Code to delegate tasks, run code reviews, and get adversarial design feedback. Includes streaming runtime, dual rescue commands, JSON envelope parsing, prompt-size guard, heartbeat-aware status, and a unit + live e2e test harness.",
+      "version": "1.1.0",
       "author": {
         "name": "madciapka"
       }
