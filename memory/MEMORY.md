@@ -1,2 +1,3 @@
 - [Claude Code plugin reload command](claude-code-reload.md) — `/reload-plugins` refreshes plugins in place; `/plugin reload` is not a real command.
 - [Plugin loader requires cold start to discover new files](feedback_plugin_loader_cold_start.md) — `/reload-plugins` does NOT pick up newly added command/agent files; only a fresh session does. Verified 2026-04-29.
+- [Prefer /gemini:review over rescue subagent for review work](feedback_prefer_slash_review.md) — A/B 2026-05-02: slash review 0 false positives + ship-verdict; rescue agent 3/8 wrong. Use rescue only for narrow diagnostic questions.
