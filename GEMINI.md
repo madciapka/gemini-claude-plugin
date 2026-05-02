@@ -17,7 +17,7 @@ The `google-gemini` plugin (`/gemini:*` slash commands) lets you delegate work t
 ## Three rules that prevent misroutes
 
 1. **`/gemini:rescue` is read-only by default.** It runs Gemini under `--approval-mode plan`. If the user wants Gemini to actually change files, that is `/gemini:execute`, not `rescue --yolo` (don't reach for the rescue with a yolo flag — execute is the right shape and carries the executor envelope).
-2. **`/gemini:execute` is write-capable and autonomous by default** (`--yolo --sandbox`, background+stream). Don't use it for review or research — those are `rescue`. Don't use it without a real plan; vague asks produce vague execution.
+2. **`/gemini:execute` is write-capable and autonomous by default** (`--yolo --sandbox`, background+stream). Don't use it for review (that's `/gemini:review` or `/gemini:adversarial-review`) or research (that's `/gemini:rescue`). Don't use it without a real plan; vague asks produce vague execution.
 3. **Foreground vs background:**
    - `/gemini:rescue` defaults to foreground; add `--background` for unclear-scope investigations.
    - `/gemini:execute` defaults to background+stream; add `--wait` only for tight, bounded tasks.

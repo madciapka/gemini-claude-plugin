@@ -2,6 +2,19 @@
 
 All notable changes to this plugin are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/), version numbers follow semver as published in `plugin.json` / `marketplace.json`.
 
+## 1.1.1 — 2026-05-02
+
+The "let the assistant call review" release. Removes the `disable-model-invocation` gate from the two review commands so the host LLM can run them directly during autonomous work.
+
+### Changed
+
+- **`/gemini:review` and `/gemini:adversarial-review` are now model-invocable.** Removed `disable-model-invocation: true` from both command frontmatters.
+  - **Why it was there originally:** mirrored the Codex plugin's pattern, where review commands are user-only so the user explicitly triggers each run.
+  - **Why it was removed:** the user-only gate forced the assistant to fall back to spawning the `gemini-rescue` subagent for review work, which is a meaningfully worse tool for the job. A direct A/B on the same diff (2026-05-02) showed slash review caught 3/3 real bugs (including a production-impact stderr-masking bug the rescue path missed) with 0 false positives, while the rescue path got ~3/8 findings wrong. Root cause: rescue is built for one-shot diagnosis and over-anchors on the prompt's literal checklist; the slash command's forced output schema (severity grading + ship/no-ship verdict + suggestion-with-code-block) is the load-bearing UX feature for review.
+  - **Net effect:** the assistant can now reach for the better-suited tool when running review autonomously, instead of being forced into the diagnostic-shaped path. Cost/quota behavior is unchanged — this only affects who can call the command, not what it does.
+- **`GEMINI.md` routing rule updated** to explicitly send review work to `/gemini:review` / `/gemini:adversarial-review` instead of telling the assistant "review is rescue."
+- **Job-control commands stay user-only.** `status`, `result`, `cancel` keep `disable-model-invocation: true` — those are intentionally user-driven.
+
 ## 1.1.0 — 2026-04-29
 
 The "delegate execution, not just questions" release. Adds a third axis to Gemini delegation: not just one-shot answers (`rescue`) and live observation (`rescue-stream`), but autonomous execution of a planned subtask with a structured handoff contract.
